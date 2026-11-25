@@ -1,0 +1,510 @@
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#8B1E2D">
+<title>IMA · Escáner QR</title>
+
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+
+<style>
+:root {
+  --red:#8B1E2D;
+  --dark:#651522;
+  --bg:#f3f4f6;
+  --green:#16834a;
+  --ink:#20242a;
+  --muted:#69727d;
+}
+* { box-sizing:border-box; }
+body {
+  margin:0;
+  font-family:Arial,sans-serif;
+  background:var(--bg);
+  color:var(--ink);
+}
+header {
+  background:linear-gradient(120deg,var(--dark),var(--red));
+  color:white;
+  padding:22px 16px;
+  text-align:center;
+}
+header h1 { margin:0; font-size:23px; }
+header p { margin:7px 0 0; font-size:13px; opacity:.9; }
+main {
+  max-width:650px;
+  margin:22px auto;
+  padding:0 14px 35px;
+}
+.card {
+  background:white;
+  padding:19px;
+  border-radius:15px;
+  box-shadow:0 3px 14px #0000000c;
+  margin-bottom:15px;
+}
+h2 { font-size:17px; margin:0 0 15px; }
+label {
+  display:block;
+  font-weight:bold;
+  font-size:13px;
+  margin:12px 0 6px;
+}
+select,input {
+  width:100%;
+  padding:13px;
+  border:1px solid #ccd2d9;
+  border-radius:9px;
+  font-size:15px;
+  background:white;
+}
+button {
+  border:0;
+  border-radius:9px;
+  padding:13px 16px;
+  font-size:14px;
+  font-weight:bold;
+  cursor:pointer;
+}
+button:disabled { opacity:.5; cursor:not-allowed; }
+.primary { background:var(--red); color:white; }
+.secondary { background:#e9edf1; color:#222; }
+.actions { display:flex; gap:9px; margin-top:13px; }
+.actions button { flex:1; }
+#reader {
+  width:100%;
+  max-width:460px;
+  margin:15px auto;
+  overflow:hidden;
+  border-radius:12px;
+}
+.notice {
+  padding:13px;
+  border-radius:9px;
+  background:#edf2f6;
+  margin-top:13px;
+  font-size:14px;
+  line-height:1.5;
+}
+.success { background:#e5f5eb; color:#126638; }
+.warning { background:#fff2df; color:#85500b; }
+.error { background:#fde9e9; color:#9b1c1c; }
+.muted { color:var(--muted); font-size:13px; line-height:1.5; }
+.stat {
+  font-size:30px;
+  font-weight:800;
+  color:var(--red);
+}
+.center { text-align:center; }
+.hidden { display:none !important; }
+.participant {
+  font-size:20px;
+  font-weight:bold;
+  margin:7px 0;
+}
+.points {
+  font-size:29px;
+  color:var(--green);
+  font-weight:800;
+}
+footer {
+  text-align:center;
+  color:var(--muted);
+  font-size:11px;
+  padding:10px;
+}
+@media(max-width:480px) {
+  header h1 { font-size:20px; }
+  main { margin-top:12px; }
+  .card { padding:15px; }
+}
+</style>
+</head>
+
+<body>
+
+<header>
+  <h1>IMA · ESCÁNER QR</h1>
+  <p>Registro institucional de asistencia y puntos</p>
+</header>
+
+<main>
+
+  <section class="card">
+    <h2>Seleccionar evento</h2>
+
+    <label>Evento abierto</label>
+    <select id="eventSelect">
+      <option value="">Consultando eventos...</option>
+    </select>
+
+    <button class="secondary" id="refreshBtn" style="width:100%;margin-top:10px">
+      Actualizar eventos
+    </button>
+
+    <div id="eventNotice" class="notice">
+      Conectando con el sistema IMA...
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Escáner de participantes</h2>
+
+    <p class="muted">
+      Selecciona un evento y activa la cámara para leer el código QR del participante.
+    </p>
+
+    <div id="reader"></div>
+
+    <div class="actions">
+      <button class="primary" id="startBtn">Activar cámara</button>
+      <button class="secondary" id="stopBtn" disabled>Detener</button>
+    </div>
+
+    <label>Registro manual de QR</label>
+    <div class="actions">
+      <input id="manualQr" placeholder="Identificador IMA-..." autocomplete="off">
+      <button class="primary" id="manualBtn">Registrar</button>
+    </div>
+
+    <div id="scanNotice" class="notice">
+      Esperando que selecciones un evento.
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Último registro</h2>
+
+    <div class="center">
+      <div id="lastName" class="participant">—</div>
+      <div id="lastEmail" class="muted"></div>
+      <div id="lastPoints" class="points">—</div>
+      <p class="muted">Puntos otorgados en este evento</p>
+      <div id="lastTotal" class="notice">Sin registros todavía.</div>
+    </div>
+  </section>
+
+  <section class="card center">
+    <div class="muted">Asistencias registradas en esta sesión</div>
+    <div id="sessionCount" class="stat">0</div>
+  </section>
+
+</main>
+
+<footer>
+  Instituto Moderno Americano · Sistema IMA Puntos QR
+</footer>
+
+<script>
+const API_URL = "https://ima-escaner-qr.jortega-0f9.workers.dev";
+
+let scanner = null;
+let scanning = false;
+let busy = false;
+let lastQr = "";
+let lastQrTime = 0;
+let sessionCount = 0;
+
+const $ = id => document.getElementById(id);
+
+function showNotice(id, message, type = "") {
+  const el = $(id);
+  el.textContent = message;
+  el.className = "notice" + (type ? " " + type : "");
+}
+
+async function apiRequest(payload) {
+  const response = await fetch(API_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(payload)
+  });
+
+  if (!response.ok) {
+    throw new Error("Error HTTP " + response.status);
+  }
+
+  const data = await response.json();
+
+  if (!data || data.error) {
+    throw new Error(data?.error || "Respuesta no válida del servidor.");
+  }
+
+  return data;
+}
+
+async function loadEvents() {
+  const select = $("eventSelect");
+  $("refreshBtn").disabled = true;
+
+  showNotice("eventNotice", "Consultando eventos abiertos...");
+
+  try {
+    const data = await apiRequest({
+      action: "getEvents"
+    });
+
+    if (!data.ok) {
+      throw new Error(data.error || "No se pudieron consultar los eventos.");
+    }
+
+    select.innerHTML = "";
+
+    if (!data.events || !data.events.length) {
+      select.add(new Option("No hay eventos abiertos", ""));
+      showNotice(
+        "eventNotice",
+        "No hay eventos abiertos. Abre uno desde el panel administrativo IMA.",
+        "warning"
+      );
+      return;
+    }
+
+    select.add(new Option("Selecciona un evento", ""));
+
+    data.events.forEach(event => {
+      const option = new Option(
+        event.name + " · " + event.points + " puntos",
+        event.id
+      );
+      select.add(option);
+    });
+
+    showNotice(
+      "eventNotice",
+      "Conexión correcta. " + data.events.length + " evento(s) disponible(s).",
+      "success"
+    );
+
+  } catch (error) {
+    showNotice(
+      "eventNotice",
+      "Error al consultar eventos: " + error.message,
+      "error"
+    );
+  } finally {
+    $("refreshBtn").disabled = false;
+  }
+}
+
+async function startScanner() {
+  if (!window.isSecureContext) {
+    showNotice(
+      "scanNotice",
+      "El escáner requiere una conexión HTTPS segura.",
+      "error"
+    );
+    return;
+  }
+
+  if (!$("eventSelect").value) {
+    showNotice("scanNotice", "Selecciona un evento abierto.", "warning");
+    return;
+  }
+
+  if (!window.Html5Qrcode) {
+    showNotice(
+      "scanNotice",
+      "No se pudo cargar el lector QR. Revisa tu conexión a internet.",
+      "error"
+    );
+    return;
+  }
+
+  if (scanning) return;
+
+  try {
+    scanner = new Html5Qrcode("reader");
+
+    $("startBtn").disabled = true;
+
+    await scanner.start(
+      { facingMode: "environment" },
+      {
+        fps: 10,
+        qrbox: { width: 230, height: 230 }
+      },
+      decodedText => {
+        const now = Date.now();
+
+        if (busy) return;
+
+        if (decodedText === lastQr && now - lastQrTime < 2500) {
+          return;
+        }
+
+        lastQr = decodedText;
+        lastQrTime = now;
+
+        registerQr(decodedText);
+      },
+      () => {}
+    );
+
+    scanning = true;
+    $("stopBtn").disabled = false;
+
+    showNotice(
+      "scanNotice",
+      "Cámara activa. Coloca el código QR dentro del recuadro.",
+      "success"
+    );
+
+  } catch (error) {
+    $("startBtn").disabled = false;
+    $("stopBtn").disabled = true;
+
+    showNotice(
+      "scanNotice",
+      "No se pudo iniciar la cámara: " +
+      (error.message || String(error)) +
+      ". Revisa los permisos del navegador.",
+      "error"
+    );
+
+    if (scanner) {
+      try { await scanner.clear(); } catch (_) {}
+      scanner = null;
+    }
+  }
+}
+
+async function stopScanner() {
+  if (!scanner || !scanning) return;
+
+  try {
+    await scanner.stop();
+    await scanner.clear();
+  } catch (error) {
+    console.warn("Aviso al detener cámara:", error);
+  }
+
+  scanner = null;
+  scanning = false;
+
+  $("startBtn").disabled = false;
+  $("stopBtn").disabled = true;
+
+  showNotice("scanNotice", "Cámara detenida.");
+}
+
+async function registerQr(qr) {
+  const eventId = $("eventSelect").value;
+
+  if (!eventId) {
+    showNotice("scanNotice", "Selecciona un evento.", "warning");
+    return;
+  }
+
+  if (busy) return;
+
+  busy = true;
+
+  showNotice("scanNotice", "Validando participante...", "");
+
+  try {
+    const result = await apiRequest({
+      action: "scan",
+      eventId: eventId,
+      qr: qr
+    });
+
+    if (result.duplicate) {
+      showNotice(
+        "scanNotice",
+        result.message || "Este participante ya fue registrado en el evento.",
+        "warning"
+      );
+
+      showParticipant(result, "DUPLICADO");
+      return;
+    }
+
+    if (!result.ok) {
+      showNotice(
+        "scanNotice",
+        result.message || "No se pudo registrar la asistencia.",
+        "error"
+      );
+      return;
+    }
+
+    sessionCount++;
+    $("sessionCount").textContent = sessionCount;
+
+    showParticipant(result, "REGISTRADO");
+
+    showNotice(
+      "scanNotice",
+      "¡Asistencia registrada! " + result.name +
+      " · +" + result.points + " puntos.",
+      "success"
+    );
+
+  } catch (error) {
+    showNotice(
+      "scanNotice",
+      "Error de comunicación: " + error.message,
+      "error"
+    );
+  } finally {
+    busy = false;
+  }
+}
+
+function showParticipant(result, status) {
+  $("lastName").textContent = result.name || status;
+  $("lastEmail").textContent = result.email || "";
+
+  $("lastPoints").textContent =
+    result.points === undefined ? "—" : "+" + result.points;
+
+  $("lastTotal").textContent =
+    result.total === undefined
+      ? status
+      : "Saldo total: " + result.total + " puntos";
+}
+
+function manualScan() {
+  const value = $("manualQr").value.trim();
+
+  if (!value) {
+    showNotice("scanNotice", "Escribe un identificador QR.", "warning");
+    return;
+  }
+
+  $("manualQr").value = "";
+  registerQr(value);
+}
+
+$("startBtn").addEventListener("click", startScanner);
+$("stopBtn").addEventListener("click", stopScanner);
+$("manualBtn").addEventListener("click", manualScan);
+$("refreshBtn").addEventListener("click", loadEvents);
+
+$("manualQr").addEventListener("keydown", event => {
+  if (event.key === "Enter") manualScan();
+});
+
+$("eventSelect").addEventListener("change", async () => {
+  if (scanning) await stopScanner();
+
+  showNotice(
+    "scanNotice",
+    "Evento seleccionado. Ya puedes activar la cámara."
+  );
+});
+
+window.addEventListener("beforeunload", () => {
+  if (scanner && scanning) scanner.stop();
+});
+
+loadEvents();
+</script>
+
+</body>
+</html>
